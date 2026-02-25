@@ -324,26 +324,38 @@ class LoopMachine {
             const clipDur = track.trimEnd - track.trimStart;
             if (clipDur <= 0) continue;
 
-            const source = this.audioCtx.createBufferSource();
-            source.buffer = track.rawBuffer;
-
             if (!track.gainNode || !track.gainNode.context || track.gainNode.context !== this.audioCtx) {
                 track.gainNode = this.audioCtx.createGain();
                 track.gainNode.connect(this.masterGain);
             }
-            source.connect(track.gainNode);
 
             const audible = !track.muted && (!anySolo || track.solo);
             track.gainNode.gain.setValueAtTime(audible ? track.volume : 0, now);
 
-            // Compute the audible window of the clip within this loop iteration
-            const absStart = startTime + track.clipOffset; // when clip would start in absolute time
-            const absEnd = absStart + clipDur;             // when clip would end
-            // Clamp to the loop window [startTime, loopEnd]
-            const audibleStart = Math.max(absStart, startTime);
-            const audibleEnd = Math.min(absEnd, loopEnd);
-            if (audibleStart >= audibleEnd) { /* fully outside loop */ }
-            else {
+            // Build list of clip instances to schedule
+            const instances = [];
+            if (track.loop) {
+                // Tile the clip across the entire loop
+                let pos = 0;
+                while (pos < loopDur) {
+                    instances.push(pos);
+                    pos += clipDur;
+                }
+            } else {
+                instances.push(track.clipOffset);
+            }
+
+            for (const offset of instances) {
+                const absStart = startTime + offset;
+                const absEnd = absStart + clipDur;
+                const audibleStart = Math.max(absStart, startTime);
+                const audibleEnd = Math.min(absEnd, loopEnd);
+                if (audibleStart >= audibleEnd) continue;
+
+                const source = this.audioCtx.createBufferSource();
+                source.buffer = track.rawBuffer;
+                source.connect(track.gainNode);
+
                 const bufferOffset = track.trimStart + (audibleStart - absStart);
                 const playDur = audibleEnd - audibleStart;
                 const when = Math.max(audibleStart, now);
@@ -351,8 +363,8 @@ class LoopMachine {
                     const skipIntoAudible = when - audibleStart;
                     source.start(when, bufferOffset + skipIntoAudible, playDur - skipIntoAudible);
                 }
+                this.activeSources.push(source);
             }
-            this.activeSources.push(source);
         }
 
         /* ---- Next loop ---- */
@@ -851,6 +863,7 @@ class LoopMachine {
             trimEnd: trimEnd ?? rawBuffer.duration,
             clipOffset,
             muted: false, solo: false, volume: 1,
+            loop: false,
         });
         this.renderTracks();
     }
@@ -873,6 +886,11 @@ class LoopMachine {
     toggleSolo(id) {
         const t = this.tracks.find(tr => tr.id === id);
         if (t) { t.solo = !t.solo; this.updateAllTrackGains(); this.renderTracks(); }
+    }
+
+    toggleLoop(id) {
+        const t = this.tracks.find(tr => tr.id === id);
+        if (t) { t.loop = !t.loop; this.waveformCache.delete(id); this.renderTracks(); }
     }
 
     setTrackVolume(id, vol) {
@@ -1025,6 +1043,7 @@ class LoopMachine {
             <div class="track-controls">
                 <button class="track-btn btn-mute${t.muted?' active':''}" data-action="mute" data-id="${t.id}">M</button>
                 <button class="track-btn btn-solo${t.solo?' active':''}" data-action="solo" data-id="${t.id}">S</button>
+                <button class="track-btn btn-loop${t.loop?' active':''}" data-action="loop" data-id="${t.id}" title="Loop/Repeat">🔁</button>
                 <div class="track-control-sep"></div>
                 <div class="track-control-group">
                     <label>Vol</label>
@@ -1044,6 +1063,7 @@ class LoopMachine {
         el.querySelector('[data-action="trim"]').addEventListener('click',   () => this.openTrimModal(track.rawBuffer, track.id));
         el.querySelector('[data-action="mute"]').addEventListener('click',   () => this.toggleMute(track.id));
         el.querySelector('[data-action="solo"]').addEventListener('click',   () => this.toggleSolo(track.id));
+        el.querySelector('[data-action="loop"]').addEventListener('click',   () => this.toggleLoop(track.id));
         el.querySelector('[data-action="volume"]').addEventListener('input', e => this.setTrackVolume(track.id, +e.target.value));
         el.querySelector('[data-action="rename"]').addEventListener('change', e => this.setTrackName(track.id, e.target.value));
 
@@ -1098,11 +1118,10 @@ class LoopMachine {
         ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 0.5;
         ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
 
-        // Draw clip
+        // Draw clip(s)
         if (track.rawBuffer) {
             const clipDur   = track.trimEnd - track.trimStart;
-            const rawStartPx = (track.clipOffset / loopDur) * w;
-            const clipPxW    = (clipDur / loopDur) * w;
+            const clipPxW   = (clipDur / loopDur) * w;
 
             // Get trimmed portion of the channel data
             const fullData  = track.rawBuffer.getChannelData(0);
@@ -1111,44 +1130,73 @@ class LoopMachine {
             const sEnd      = Math.min(Math.floor(track.trimEnd * sr), fullData.length);
             const trimData  = fullData.subarray(sStart, sEnd);
 
-            // Handle clip partially off-screen on either side
-            let drawStartPx = rawStartPx;
-            let drawData = trimData;
-            let drawPxW = clipPxW;
-
-            if (rawStartPx < 0) {
-                // Clip extends past left edge — slice off the hidden portion
-                const hiddenFrac = -rawStartPx / clipPxW;
-                const sampleOffset = Math.floor(hiddenFrac * drawData.length);
-                drawData = drawData.subarray(sampleOffset);
-                drawPxW = clipPxW + rawStartPx; // reduce width
-                drawStartPx = 0;
-            }
-            if (drawStartPx + drawPxW > w) {
-                // Clip extends past right edge — slice off the overflow
-                const visPxW = w - drawStartPx;
-                const visFrac = visPxW / drawPxW;
-                const sampleEnd = Math.ceil(visFrac * drawData.length);
-                drawData = drawData.subarray(0, sampleEnd);
-                drawPxW = visPxW;
+            // Build list of instances to draw
+            const offsets = [];
+            if (track.loop) {
+                let pos = 0;
+                while (pos < loopDur) { offsets.push(pos); pos += clipDur; }
+            } else {
+                offsets.push(track.clipOffset);
             }
 
-            if (drawPxW > 0 && drawData.length > 0) {
-                this._drawWaveSegment(ctx, drawData, drawStartPx, drawPxW, w, h, 'rgba(130,209,115,0.85)');
+            // Track overall visible bounds for shading
+            let overallVisStart = w;
+            let overallVisEnd = 0;
+
+            for (let idx = 0; idx < offsets.length; idx++) {
+                const rawStartPx = (offsets[idx] / loopDur) * w;
+                let drawStartPx = rawStartPx;
+                let drawData = trimData;
+                let drawPxW = clipPxW;
+
+                if (rawStartPx < 0) {
+                    const hiddenFrac = -rawStartPx / clipPxW;
+                    const sampleOffset = Math.floor(hiddenFrac * drawData.length);
+                    drawData = drawData.subarray(sampleOffset);
+                    drawPxW = clipPxW + rawStartPx;
+                    drawStartPx = 0;
+                }
+                if (drawStartPx + drawPxW > w) {
+                    const visPxW = w - drawStartPx;
+                    const visFrac = visPxW / drawPxW;
+                    const sampleEnd = Math.ceil(visFrac * drawData.length);
+                    drawData = drawData.subarray(0, sampleEnd);
+                    drawPxW = visPxW;
+                }
+
+                if (drawPxW > 0 && drawData.length > 0) {
+                    // Use slightly dimmer color for repeat instances
+                    const color = (track.loop && idx > 0) ? 'rgba(130,209,115,0.5)' : 'rgba(130,209,115,0.85)';
+                    this._drawWaveSegment(ctx, drawData, drawStartPx, drawPxW, w, h, color);
+                }
+
+                const visS = Math.max(0, rawStartPx);
+                const visE = Math.min(w, rawStartPx + clipPxW);
+                if (visS < overallVisStart) overallVisStart = visS;
+                if (visE > overallVisEnd) overallVisEnd = visE;
+
+                // Draw separator line between loop tiles
+                if (track.loop && rawStartPx > 0 && rawStartPx < w) {
+                    ctx.strokeStyle = 'rgba(130,209,115,0.3)';
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath(); ctx.moveTo(rawStartPx, 0); ctx.lineTo(rawStartPx, h); ctx.stroke();
+                    ctx.setLineDash([]);
+                }
             }
 
-            // Shade inactive regions (only within canvas bounds)
-            const visClipStart = Math.max(0, rawStartPx);
-            const visClipEnd = Math.min(w, rawStartPx + clipPxW);
-            ctx.fillStyle = 'rgba(15,10,10,0.5)';
-            if (visClipStart > 0) ctx.fillRect(0, 0, visClipStart, h);
-            if (visClipEnd < w) ctx.fillRect(visClipEnd, 0, w - visClipEnd, h);
+            // Shade inactive regions
+            if (!track.loop) {
+                ctx.fillStyle = 'rgba(15,10,10,0.5)';
+                if (overallVisStart > 0) ctx.fillRect(0, 0, overallVisStart, h);
+                if (overallVisEnd < w) ctx.fillRect(overallVisEnd, 0, w - overallVisEnd, h);
+            }
 
-            // Grab cursor zone indicator — subtle border on visible clip
-            if (visClipEnd > visClipStart) {
+            // Grab cursor zone indicator
+            if (!track.loop && overallVisEnd > overallVisStart) {
                 ctx.strokeStyle = 'rgba(130,209,115,0.35)';
                 ctx.lineWidth = 1;
-                ctx.strokeRect(visClipStart + 0.5, 0.5, visClipEnd - visClipStart - 1, h - 1);
+                ctx.strokeRect(overallVisStart + 0.5, 0.5, overallVisEnd - overallVisStart - 1, h - 1);
             }
         }
 
@@ -1333,17 +1381,36 @@ class LoopMachine {
                     gain.gain.value = track.volume;
                     source.connect(gain); gain.connect(masterGain);
 
-                    // Compute audible window (same logic as scheduleLoop)
-                    const absStart = loopStart + track.clipOffset;
-                    const absEnd = absStart + clipDur;
-                    const loopEnd = loopStart + this.loopDuration;
-                    const audibleStart = Math.max(absStart, loopStart);
-                    const audibleEnd = Math.min(absEnd, loopEnd);
-                    if (audibleStart >= audibleEnd) continue;
+                    // Build instances (tiled if loop is on)
+                    const instances = [];
+                    if (track.loop) {
+                        let pos = 0;
+                        while (pos < this.loopDuration) {
+                            instances.push(pos);
+                            pos += clipDur;
+                        }
+                    } else {
+                        instances.push(track.clipOffset);
+                    }
 
-                    const bufferOffset = track.trimStart + (audibleStart - absStart);
-                    const playDur = audibleEnd - audibleStart;
-                    source.start(audibleStart, bufferOffset, playDur);
+                    const loopEnd = loopStart + this.loopDuration;
+                    for (const offset of instances) {
+                        const absStart = loopStart + offset;
+                        const absEnd = absStart + clipDur;
+                        const audibleStart = Math.max(absStart, loopStart);
+                        const audibleEnd = Math.min(absEnd, loopEnd);
+                        if (audibleStart >= audibleEnd) continue;
+
+                        const src = offCtx.createBufferSource();
+                        src.buffer = buf;
+                        const g = offCtx.createGain();
+                        g.gain.value = track.volume;
+                        src.connect(g); g.connect(masterGain);
+
+                        const bufferOffset = track.trimStart + (audibleStart - absStart);
+                        const playDur = audibleEnd - audibleStart;
+                        src.start(audibleStart, bufferOffset, playDur);
+                    }
                 }
             }
 
