@@ -105,7 +105,6 @@ class LoopMachine {
             recordTrackBtn: $('recordTrackBtn'), uploadBtn: $('uploadBtn'), fileInput: $('fileInput'),
             // Record modal
             recordModal: $('recordModal'), modalCloseBtn: $('modalCloseBtn'),
-            recCountIn: $('recCountIn'),
             recDot: $('recDot'), recStatusText: $('recStatusText'),
             recProgressFill: $('recProgressFill'),
             startRecordingBtn: $('startRecordingBtn'), cancelRecordBtn: $('cancelRecordBtn'), discardRecordBtn: $('discardRecordBtn'),
@@ -226,9 +225,17 @@ class LoopMachine {
             if (e.code === 'KeyM')   { e.preventDefault(); this.toggleMetronome(); }
         });
 
-        /* Global mouse up for clip drag */
+        /* Global mouse/touch for clip drag */
         window.addEventListener('mouseup', () => this._endClipDrag());
         window.addEventListener('mousemove', e => this._moveClipDrag(e));
+        window.addEventListener('touchend', () => this._endClipDrag());
+        window.addEventListener('touchcancel', () => this._endClipDrag());
+        window.addEventListener('touchmove', e => {
+            if (!this._clipDrag) return;
+            e.preventDefault();
+            const touch = e.touches[0];
+            this._moveClipDrag(touch);
+        }, { passive: false });
 
         /* Resize → redraw */
         let rt;
@@ -379,36 +386,42 @@ class LoopMachine {
         this.dom.metronomeBtn.classList.toggle('active', this.metronomeOn);
     }
 
-    /* ---- Count-in (FIXED: single resolve, proper beat display) ---- */
-    playCountIn() {
-        const beatDur = this.beatDuration;
-        const t0 = this.audioCtx.currentTime;
-
-        // Schedule audio clicks for one bar
-        for (let b = 0; b < this.beatsPerBar; b++) {
-            this.scheduleClick(t0 + b * beatDur, b === 0);
-        }
-
-        this.dom.recDot.className = 'rec-dot countdown';
-
-        return new Promise(resolve => {
-            let beat = 0;
-            const show = () => {
-                this.dom.recStatusText.textContent = `Count-in: ${this.beatsPerBar - beat}`;
-                beat++;
-                if (beat > this.beatsPerBar) {
-                    resolve();
-                } else {
-                    setTimeout(show, beatDur * 1000);
-                }
-            };
-            show();
-        });
-    }
-
     /* ==========================================================
        Recording
     ========================================================== */
+    /* ---- Wait until the next bar boundary, showing beat countdown ---- */
+    _waitForNextBar() {
+        return new Promise(resolve => {
+            const beatDur = this.beatDuration;
+            const barDur = this.barDuration;
+
+            this.dom.recDot.className = 'rec-dot countdown';
+
+            const tick = () => {
+                if (!this.isPlaying) { resolve(); return; }
+
+                const elapsed = this.audioCtx.currentTime - this.playOriginTime;
+                const loopPos = ((elapsed % this.loopDuration) + this.loopDuration) % this.loopDuration;
+                const barPos = loopPos % barDur;
+
+                // How many beats left in this bar
+                const currentBeatInBar = Math.floor(barPos / beatDur);
+                const beatsLeft = this.beatsPerBar - currentBeatInBar;
+                const timeToNextBar = barDur - barPos;
+
+                if (timeToNextBar < 0.03) {
+                    // Close enough — go!
+                    resolve();
+                    return;
+                }
+
+                this.dom.recStatusText.textContent = `Starting in ${beatsLeft} beat${beatsLeft !== 1 ? 's' : ''}…`;
+                requestAnimationFrame(tick);
+            };
+            tick();
+        });
+    }
+
     openRecordModal() {
         if (this.isRecording) return;
         this.resetRecordStatus();
@@ -430,8 +443,6 @@ class LoopMachine {
     async startRecording() {
         await this.initAudio();
 
-        const countIn = this.dom.recCountIn.checked;
-
         // Request mic
         try {
             this.mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -447,20 +458,9 @@ class LoopMachine {
         this.dom.cancelRecordBtn.textContent = '⏹ Stop';
         this.dom.discardRecordBtn.classList.remove('hidden');
 
-        // Count-in
-        if (countIn) await this.playCountIn();
-
-        // If playing, wait until the next bar boundary for a tight sync
+        // If playing, count down beats until the next bar boundary
         if (this.isPlaying) {
-            const elapsed = this.audioCtx.currentTime - this.playOriginTime;
-            const loopPos = ((elapsed % this.loopDuration) + this.loopDuration) % this.loopDuration;
-            const barPos  = loopPos % this.barDuration;
-            const wait    = barPos < 0.005 ? 0 : this.barDuration - barPos;
-            if (wait > 0.01) {
-                this.dom.recDot.className = 'rec-dot countdown';
-                this.dom.recStatusText.textContent = 'Syncing to bar…';
-                await new Promise(r => setTimeout(r, wait * 1000));
-            }
+            await this._waitForNextBar();
         }
 
         // Setup MediaRecorder
@@ -1047,9 +1047,14 @@ class LoopMachine {
         el.querySelector('[data-action="volume"]').addEventListener('input', e => this.setTrackVolume(track.id, +e.target.value));
         el.querySelector('[data-action="rename"]').addEventListener('change', e => this.setTrackName(track.id, e.target.value));
 
-        // Clip drag on waveform
+        // Clip drag on waveform (mouse + touch)
         const wf = el.querySelector(`[data-waveform-id="${track.id}"]`);
         wf.addEventListener('mousedown', e => this._startClipDrag(track.id, e));
+        wf.addEventListener('touchstart', e => {
+            const touch = e.touches[0];
+            this._startClipDrag(track.id, touch);
+            if (this._clipDrag) e.preventDefault();
+        }, { passive: false });
     }
 
     _esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
