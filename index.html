@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Loop Machine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">⟳</span>
+                <h1>LOOP MACHINE</h1>
+            </div>
+            <div class="settings">
+                <div class="setting-group">
+                    <label for="bpmInput">BPM</label>
+                    <input type="number" id="bpmInput" value="120" min="30" max="300" step="1">
+                </div>
+                <div class="setting-group">
+                    <label for="barsInput">BARS</label>
+                    <input type="number" id="barsInput" value="4" min="1" max="64" step="1">
+                </div>
+                <div class="setting-group">
+                    <label for="timeSigSelect">TIME</label>
+                    <select id="timeSigSelect">
+                        <option value="3">3/4</option>
+                        <option value="4" selected>4/4</option>
+                        <option value="5">5/4</option>
+                        <option value="6">6/8</option>
+                        <option value="7">7/8</option>
+                    </select>
+                </div>
+                <div class="setting-group">
+                    <label>LOOP</label>
+                    <span id="loopDurationDisplay" class="mono-value">8.00s</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Transport -->
+        <section class="transport">
+            <div class="transport-left">
+                <button class="transport-btn" id="playBtn" title="Play/Pause (Space)">
+                    <svg class="icon" viewBox="0 0 24 24"><polygon points="6,3 20,12 6,21"/></svg>
+                </button>
+                <button class="transport-btn" id="stopBtn" title="Stop">
+                    <svg class="icon" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+                </button>
+                <button class="transport-btn btn-rec" id="recordBtn" title="Record (R)">
+                    <svg class="icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg>
+                </button>
+                <div class="transport-divider"></div>
+                <button class="transport-btn btn-metro active" id="metronomeBtn" title="Metronome (M)">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L8 22h8L12 2zM12 8l2 10h-4l2-10z"/></svg>
+                </button>
+                <div class="master-vol">
+                    <svg class="icon-sm" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5z"/></svg>
+                    <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="0.8">
+                </div>
+            </div>
+            <div class="transport-right">
+                <div class="progress-container">
+                    <div class="progress-bar" id="progressBar">
+                        <div class="progress-fill" id="progressFill"></div>
+                        <div class="progress-head" id="progressHead"></div>
+                    </div>
+                    <div class="beat-markers" id="beatMarkers"></div>
+                </div>
+                <div class="pos-display" id="posDisplay">
+                    <span class="pos-bar" id="posBar">1</span>
+                    <span class="pos-sep">.</span>
+                    <span class="pos-beat" id="posBeat">1</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Track List -->
+        <div class="track-list" id="trackList">
+            <div class="empty-state" id="emptyState">
+                <div class="empty-icon">🎵</div>
+                <p>No tracks yet</p>
+                <p class="hint">Record or upload audio to get started</p>
+            </div>
+        </div>
+
+        <!-- Actions -->
+        <section class="actions">
+            <button class="action-btn btn-primary" id="recordTrackBtn">
+                ⏺ Record Track
+            </button>
+            <button class="action-btn" id="uploadBtn">
+                📁 Upload Audio
+            </button>
+            <button class="action-btn btn-export" id="exportBtn">
+                💾 Export Mix
+            </button>
+            <input type="file" id="fileInput" accept="audio/*" hidden>
+        </section>
+
+        <footer class="tips">
+            <p>💡 Headphones recommended &nbsp;•&nbsp; <kbd>Space</kbd> Play/Stop &nbsp;•&nbsp; <kbd>R</kbd> Record &nbsp;•&nbsp; <kbd>M</kbd> Metronome &nbsp;•&nbsp; Drag clips to reposition</p>
+            <p class="credit">Built by <span class="credit-name">Z3R0C1PH3R</span></p>
+        </footer>
+    </div>
+
+    <!-- Record Modal -->
+    <div class="modal-overlay hidden" id="recordModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>🎙️ Record New Track</h2>
+                <button class="modal-close-btn" id="modalCloseBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-grid">
+                    <div class="modal-field">
+                        <label>Count-in (1 bar)</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="recCountIn" checked>
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="field-hint">Metronome count before recording</span>
+                    </div>
+                </div>
+                <p class="field-hint" style="margin-top:0.5rem;text-align:center;">Hit <strong>Stop</strong> when you're done — it'll be added to the timeline.</p>
+                <div class="rec-status" id="recStatus">
+                    <div class="rec-indicator">
+                        <span class="rec-dot" id="recDot"></span>
+                        <span id="recStatusText">Ready to record</span>
+                    </div>
+                    <div class="rec-progress-bar">
+                        <div class="rec-progress-fill" id="recProgressFill"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn" id="cancelRecordBtn">Cancel</button>
+                <button class="action-btn btn-danger hidden" id="discardRecordBtn">🗑️ Discard</button>
+                <button class="action-btn btn-primary btn-glow" id="startRecordingBtn">
+                    🎙️ Start Recording
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Trim Modal -->
+    <div class="modal-overlay hidden" id="trimModal">
+        <div class="modal modal-wide">
+            <div class="modal-header">
+                <h2 id="trimTitle">✂️ Trim &amp; Place</h2>
+                <button class="modal-close-btn" id="trimCloseBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="trim-container" id="trimContainer">
+                    <canvas id="trimCanvas"></canvas>
+                    <div class="trim-region" id="trimRegion"></div>
+                    <div class="trim-shade trim-shade-left" id="trimShadeLeft"></div>
+                    <div class="trim-shade trim-shade-right" id="trimShadeRight"></div>
+                    <div class="trim-handle trim-handle-left" id="trimHandleLeft"><div class="trim-handle-bar"></div></div>
+                    <div class="trim-handle trim-handle-right" id="trimHandleRight"><div class="trim-handle-bar"></div></div>
+                    <div class="trim-playhead" id="trimPlayhead"></div>
+                </div>
+                <div class="trim-playback-row">
+                    <button class="trim-play-btn" id="trimPlayBtn" title="Preview selection">▶</button>
+                    <span class="trim-playback-time" id="trimPlaybackTime">0:00</span>
+                </div>
+                <div class="trim-info">
+                    <span class="trim-info-item">
+                        <label>Start</label>
+                        <input type="number" id="trimStartInput" step="0.01" min="0" class="trim-time-input" value="0.00">
+                    </span>
+                    <span class="trim-info-item">
+                        <label>End</label>
+                        <input type="number" id="trimEndInput" step="0.01" min="0" class="trim-time-input" value="0.00">
+                    </span>
+                    <span class="trim-info-item">
+                        <label>Duration</label>
+                        <strong id="trimDurationDisplay">0.00s</strong>
+                    </span>
+                    <span class="trim-info-item">
+                        <label>Bars</label>
+                        <strong id="trimBarsDisplay">0</strong>
+                    </span>
+                </div>
+
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn" id="trimCancelBtn">Cancel</button>
+                <button class="action-btn btn-primary" id="trimApplyBtn">✓ Add to Timeline</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export Modal -->
+    <div class="modal-overlay hidden" id="exportModal">
+        <div class="modal">
+            <div class="modal-header">
+                <h2>💾 Export Mix</h2>
+                <button class="modal-close-btn" id="exportCloseBtn">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-grid">
+                    <div class="modal-field">
+                        <label>Format</label>
+                        <select id="exportFormat" class="export-select">
+                            <option value="wav" selected>WAV (lossless)</option>
+                            <option value="wav-24">WAV 24-bit</option>
+                            <option value="wav-32">WAV 32-bit float</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>Sample Rate</label>
+                        <select id="exportSampleRate" class="export-select">
+                            <option value="22050">22,050 Hz</option>
+                            <option value="44100" selected>44,100 Hz</option>
+                            <option value="48000">48,000 Hz</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>Channels</label>
+                        <select id="exportChannels" class="export-select">
+                            <option value="1">Mono</option>
+                            <option value="2" selected>Stereo</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>Loops</label>
+                        <select id="exportLoops" class="export-select">
+                            <option value="1" selected>1×</option>
+                            <option value="2">2×</option>
+                            <option value="4">4×</option>
+                            <option value="8">8×</option>
+                        </select>
+                    </div>
+                    <div class="modal-field">
+                        <label>Normalize</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="exportNormalize" checked>
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="field-hint">Maximize volume without clipping</span>
+                    </div>
+                    <div class="modal-field">
+                        <label>Include Metronome</label>
+                        <label class="toggle">
+                            <input type="checkbox" id="exportMetronome">
+                            <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        </label>
+                        <span class="field-hint">Render click track in export</span>
+                    </div>
+                </div>
+                <div class="export-status hidden" id="exportStatus">
+                    <div class="export-progress-bar">
+                        <div class="export-progress-fill" id="exportProgressFill"></div>
+                    </div>
+                    <span class="export-status-text" id="exportStatusText">Rendering…</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="action-btn" id="exportCancelBtn">Cancel</button>
+                <button class="action-btn btn-primary btn-glow" id="exportStartBtn">🔊 Render &amp; Download</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast hidden" id="toast"></div>
+
+    <script src="app.js"></script>
+</body>
+</html>
