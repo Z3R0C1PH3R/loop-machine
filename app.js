@@ -103,6 +103,7 @@ class LoopMachine {
             beatMarkers: $('beatMarkers'), posBar: $('posBar'), posBeat: $('posBeat'),
             trackList: $('trackList'),
             recordTrackBtn: $('recordTrackBtn'), uploadBtn: $('uploadBtn'), fileInput: $('fileInput'),
+            saveProjectBtn: $('saveProjectBtn'), loadProjectBtn: $('loadProjectBtn'), projectFileInput: $('projectFileInput'),
             // Record modal
             recordModal: $('recordModal'), modalCloseBtn: $('modalCloseBtn'),
             recDot: $('recDot'), recStatusText: $('recStatusText'),
@@ -166,6 +167,12 @@ class LoopMachine {
         this.dom.uploadBtn.addEventListener('click', () => this.dom.fileInput.click());
         this.dom.fileInput.addEventListener('change', e => {
             if (e.target.files.length) this.handleFileUpload(e.target.files[0]);
+            e.target.value = '';
+        });
+        this.dom.saveProjectBtn.addEventListener('click', () => this.saveProject());
+        this.dom.loadProjectBtn.addEventListener('click', () => this.dom.projectFileInput.click());
+        this.dom.projectFileInput.addEventListener('change', e => {
+            if (e.target.files.length) this.loadProject(e.target.files[0]);
             e.target.value = '';
         });
 
@@ -1576,6 +1583,165 @@ class LoopMachine {
 
     _writeString(view, offset, str) {
         for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+    }
+
+    /* ==========================================================
+       Save / Load Project (.zip)
+    ========================================================== */
+    async saveProject() {
+        if (!this.tracks.length) {
+            this.showToast('No tracks to save!', 'error');
+            return;
+        }
+        await this.initAudio();
+        this.showToast('Packaging project…');
+
+        try {
+            const zip = new JSZip();
+
+            // Encode each track's rawBuffer as WAV and store metadata
+            const trackMetas = [];
+            for (let i = 0; i < this.tracks.length; i++) {
+                const t = this.tracks[i];
+                const audioFileName = `track_${i}.wav`;
+
+                // Encode the full raw buffer as 32-bit float WAV for lossless round-trip
+                const channelData = [];
+                for (let ch = 0; ch < t.rawBuffer.numberOfChannels; ch++) {
+                    channelData.push(new Float32Array(t.rawBuffer.getChannelData(ch)));
+                }
+                const wavBlob = this._encodeWAV(channelData, t.rawBuffer.sampleRate, 32);
+                zip.file(audioFileName, wavBlob);
+
+                trackMetas.push({
+                    file: audioFileName,
+                    name: t.name,
+                    trimStart: t.trimStart,
+                    trimEnd: t.trimEnd,
+                    clipOffset: t.clipOffset,
+                    muted: t.muted,
+                    solo: t.solo,
+                    volume: t.volume,
+                    loop: t.loop,
+                });
+            }
+
+            const project = {
+                version: 1,
+                app: 'Loop Machine by Z3R0C1PH3R',
+                savedAt: new Date().toISOString(),
+                settings: {
+                    bpm: this.bpm,
+                    beatsPerBar: this.beatsPerBar,
+                    totalBars: this.totalBars,
+                    masterVolume: this.masterVolume,
+                    metronomeOn: this.metronomeOn,
+                },
+                tracks: trackMetas,
+            };
+            zip.file('project.json', JSON.stringify(project, null, 2));
+
+            const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+
+            // Download
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `loop-project-${this.bpm}bpm-${this.totalBars}bars.zip`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            setTimeout(() => URL.revokeObjectURL(url), 5000);
+
+            this.showToast('Project saved! 📦');
+        } catch (err) {
+            console.error('Save failed:', err);
+            this.showToast('Failed to save project', 'error');
+        }
+    }
+
+    async loadProject(file) {
+        await this.initAudio();
+        this.showToast('Loading project…');
+
+        try {
+            const zip = await JSZip.loadAsync(file);
+            const projectFile = zip.file('project.json');
+            if (!projectFile) {
+                this.showToast('Invalid project file — missing project.json', 'error');
+                return;
+            }
+
+            const project = JSON.parse(await projectFile.async('string'));
+            if (!project.settings || !project.tracks) {
+                this.showToast('Invalid project data', 'error');
+                return;
+            }
+
+            // Stop playback
+            if (this.isPlaying) this.stop();
+
+            // Restore settings
+            this.bpm = project.settings.bpm || 120;
+            this.beatsPerBar = project.settings.beatsPerBar || 4;
+            this.totalBars = project.settings.totalBars || 4;
+            this.masterVolume = project.settings.masterVolume ?? 0.8;
+            this.metronomeOn = project.settings.metronomeOn ?? true;
+
+            this.dom.bpmInput.value = this.bpm;
+            this.dom.barsInput.value = this.totalBars;
+            this.dom.timeSigSelect.value = String(this.beatsPerBar);
+            this.dom.masterVolume.value = this.masterVolume;
+            if (this.masterGain) this.masterGain.gain.setValueAtTime(this.masterVolume, this.audioCtx.currentTime);
+            this.dom.metronomeBtn.classList.toggle('active', this.metronomeOn);
+            this.renderBeatMarkers();
+            this.updateLoopDisplay();
+
+            // Clear existing tracks
+            for (const t of this.tracks) {
+                try { t.gainNode?.disconnect(); } catch {}
+            }
+            this.tracks = [];
+            this.waveformCache.clear();
+
+            // Load each track
+            for (const meta of project.tracks) {
+                const audioFile = zip.file(meta.file);
+                if (!audioFile) {
+                    console.warn('Missing audio file:', meta.file);
+                    continue;
+                }
+                const ab = await audioFile.async('arraybuffer');
+                const rawBuffer = await this.audioCtx.decodeAudioData(ab);
+
+                const id = this.nextTrackId++;
+                const gainNode = this.audioCtx.createGain();
+                gainNode.gain.value = 1;
+                gainNode.connect(this.masterGain);
+
+                this.tracks.push({
+                    id,
+                    name: meta.name || `Track ${id}`,
+                    rawBuffer,
+                    gainNode,
+                    trimStart: meta.trimStart || 0,
+                    trimEnd: meta.trimEnd ?? rawBuffer.duration,
+                    clipOffset: meta.clipOffset || 0,
+                    muted: meta.muted || false,
+                    solo: meta.solo || false,
+                    volume: meta.volume ?? 1,
+                    loop: meta.loop || false,
+                });
+            }
+
+            this.updateAllTrackGains();
+            this.renderTracks();
+            this.showToast(`Project loaded! ${this.tracks.length} track${this.tracks.length !== 1 ? 's' : ''} 🎵`);
+
+        } catch (err) {
+            console.error('Load failed:', err);
+            this.showToast('Failed to load project: ' + err.message, 'error');
+        }
     }
 }
 

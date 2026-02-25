@@ -208,6 +208,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: v
 .action-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .action-btn.btn-export { border-color: var(--warning-dim); color: var(--warning); }
 .action-btn.btn-export:hover { background: var(--warning-dim); color: var(--bg-primary); border-color: var(--warning); box-shadow: 0 0 16px rgba(209,200,115,0.25); }
+.action-btn.btn-save { border-color: #7395d1; color: #7395d1; }
+.action-btn.btn-save:hover { background: #5a7ab5; color: white; border-color: #7395d1; box-shadow: 0 0 16px rgba(115,149,209,0.25); }
+.action-btn.btn-load { border-color: #9b7ed1; color: #9b7ed1; }
+.action-btn.btn-load:hover { background: #7c62b0; color: white; border-color: #9b7ed1; box-shadow: 0 0 16px rgba(155,126,209,0.25); }
+.actions-divider { width: 1px; height: 28px; background: var(--bg-hover); align-self: center; }
 
 /* ---- Footer ---- */
 .tips { text-align: center; padding: 12px; color: var(--text-muted); font-size: 0.75rem; }

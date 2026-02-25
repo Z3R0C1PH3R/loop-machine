@@ -100,7 +100,15 @@
             <button class="action-btn btn-export" id="exportBtn">
                 💾 Export Mix
             </button>
+            <div class="actions-divider"></div>
+            <button class="action-btn btn-save" id="saveProjectBtn">
+                📦 Save Project
+            </button>
+            <button class="action-btn btn-load" id="loadProjectBtn">
+                📥 Load Project
+            </button>
             <input type="file" id="fileInput" accept="audio/*" hidden>
+            <input type="file" id="projectFileInput" accept=".zip" hidden>
         </section>
 
         <footer class="tips">
@@ -261,6 +269,7 @@
     <!-- Toast -->
     <div class="toast hidden" id="toast"></div>
 
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
