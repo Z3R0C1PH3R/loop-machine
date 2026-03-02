@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Loop Machine</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f0a0a'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%2382d173' stroke-width='2.5'/%3E%3Cpath d='M22 10l2 4h-5z' fill='%2382d173'/%3E%3C/svg%3E">
+    <meta property="og:title" content="Loop Machine">
+    <meta property="og:description" content="A browser-based loop station — record, upload, layer, and export audio loops. Built with Web Audio API.">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://loop.z3r0c1ph3r.com">
+    <meta name="theme-color" content="#0f0a0a">
+    <meta name="description" content="A browser-based loop station — record, upload, layer, and export audio loops. Built with Web Audio API by Z3R0C1PH3R.">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -59,6 +66,13 @@
                 <button class="transport-btn btn-metro active" id="metronomeBtn" title="Metronome (M)">
                     <svg class="icon" viewBox="0 0 24 24"><path d="M12 2L8 22h8L12 2zM12 8l2 10h-4l2-10z"/></svg>
                 </button>
+                <div class="transport-divider"></div>
+                <button class="transport-btn btn-snap" id="snapBtn" title="Snap to Grid (G)">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M4 4h6v6H4V4zm8 0h6v6h-6V4zM4 12h6v6H4v-6zm8 0h6v6h-6v-6z"/></svg>
+                </button>
+                <button class="transport-btn btn-undo" id="undoBtn" title="Undo (Ctrl+Z)">
+                    <svg class="icon" viewBox="0 0 24 24"><path d="M12.5 8c-2.65 0-5.05.98-6.9 2.6L2 7v9h9l-3.62-3.62c1.39-1.16 3.16-1.88 5.12-1.88 3.54 0 6.55 2.31 7.6 5.5l2.37-.78C21.08 11.03 17.15 8 12.5 8z"/></svg>
+                </button>
                 <div class="master-vol">
                     <svg class="icon-sm" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3A4.5 4.5 0 0014 8.5v7a4.47 4.47 0 002.5-3.5z"/></svg>
                     <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="0.8">
@@ -112,7 +126,7 @@
         </section>
 
         <footer class="tips">
-            <p>💡 Headphones recommended &nbsp;•&nbsp; <kbd>Space</kbd> Play/Stop &nbsp;•&nbsp; <kbd>R</kbd> Record &nbsp;•&nbsp; <kbd>M</kbd> Metronome &nbsp;•&nbsp; Drag clips to reposition</p>
+            <p>💡 Headphones recommended &nbsp;•&nbsp; <kbd>Space</kbd> Play/Stop &nbsp;•&nbsp; <kbd>R</kbd> Record &nbsp;•&nbsp; <kbd>M</kbd> Metronome &nbsp;•&nbsp; <kbd>G</kbd> Snap &nbsp;•&nbsp; <kbd>Ctrl+Z</kbd> Undo &nbsp;•&nbsp; Drag clips to reposition</p>
             <p class="credit">Built by <a href="https://z3r0c1ph3r.com" target="_blank" rel="noopener" class="credit-name">Z3R0C1PH3R</a></p>
         </footer>
     </div>

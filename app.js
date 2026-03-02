@@ -53,6 +53,13 @@ class LoopMachine {
         /* ---- Clip drag state ---- */
         this._clipDrag = null;          // { trackId, startMouseX, origOffset, containerW }
 
+        /* ---- Snap to grid ---- */
+        this.snapToGrid = false;
+
+        /* ---- Undo ---- */
+        this.undoStack = [];
+        this.maxUndoSteps = 50;
+
         /* ---- Waveform cache ---- */
         this.waveformCache = new Map();
 
@@ -130,6 +137,9 @@ class LoopMachine {
             exportStatus: $('exportStatus'), exportProgressFill: $('exportProgressFill'),
             exportStatusText: $('exportStatusText'),
             exportCancelBtn: $('exportCancelBtn'), exportStartBtn: $('exportStartBtn'),
+            // Transport extras
+            snapBtn: $('snapBtn'), undoBtn: $('undoBtn'),
+            progressBar: $('progressBar'),
             // Toast
             toast: $('toast'),
         };
@@ -148,6 +158,11 @@ class LoopMachine {
             this.masterVolume = +e.target.value;
             if (this.masterGain) this.masterGain.gain.setValueAtTime(this.masterVolume, this.audioCtx.currentTime);
         });
+
+        /* Click-to-seek, Snap, Undo */
+        this.dom.progressBar.addEventListener('click', e => this._seekFromClick(e));
+        this.dom.snapBtn.addEventListener('click', () => this.toggleSnap());
+        this.dom.undoBtn.addEventListener('click', () => this.undo());
 
         /* Settings */
         this.dom.bpmInput.addEventListener('change', e => {
@@ -230,6 +245,8 @@ class LoopMachine {
             if (e.code === 'Space')  { e.preventDefault(); this.togglePlay(); }
             if (e.code === 'KeyR')   { e.preventDefault(); this.openRecordModal(); }
             if (e.code === 'KeyM')   { e.preventDefault(); this.toggleMetronome(); }
+            if (e.code === 'KeyG')   { e.preventDefault(); this.toggleSnap(); }
+            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') { e.preventDefault(); this.undo(); }
         });
 
         /* Global mouse/touch for clip drag */
@@ -333,7 +350,10 @@ class LoopMachine {
 
             if (!track.gainNode || !track.gainNode.context || track.gainNode.context !== this.audioCtx) {
                 track.gainNode = this.audioCtx.createGain();
-                track.gainNode.connect(this.masterGain);
+                track.panNode = this.audioCtx.createStereoPanner();
+                track.panNode.pan.value = track.pan || 0;
+                track.gainNode.connect(track.panNode);
+                track.panNode.connect(this.masterGain);
             }
 
             const audible = !track.muted && (!anySolo || track.solo);
@@ -831,6 +851,7 @@ class LoopMachine {
 
         if (this.trimEditTrackId !== null && this.trimEditTrackId !== undefined) {
             // Update existing track
+            this.pushUndo();
             const t = this.tracks.find(tr => tr.id === this.trimEditTrackId);
             if (t) {
                 t.trimStart = this.trimStart;
@@ -857,19 +878,24 @@ class LoopMachine {
        Track management
     ========================================================== */
     addTrack({ rawBuffer, name, trimStart = 0, trimEnd, clipOffset = 0 }) {
+        this.pushUndo();
         const id = this.nextTrackId++;
         let gainNode = null;
+        let panNode = null;
         if (this.audioCtx) {
             gainNode = this.audioCtx.createGain();
             gainNode.gain.value = 1;
-            gainNode.connect(this.masterGain);
+            panNode = this.audioCtx.createStereoPanner();
+            panNode.pan.value = 0;
+            gainNode.connect(panNode);
+            panNode.connect(this.masterGain);
         }
         this.tracks.push({
-            id, name, rawBuffer, gainNode,
+            id, name, rawBuffer, gainNode, panNode,
             trimStart,
             trimEnd: trimEnd ?? rawBuffer.duration,
             clipOffset,
-            muted: false, solo: false, volume: 1,
+            muted: false, solo: false, volume: 1, pan: 0,
             loop: false,
         });
         this.renderTracks();
@@ -878,7 +904,9 @@ class LoopMachine {
     removeTrack(id) {
         const idx = this.tracks.findIndex(t => t.id === id);
         if (idx === -1) return;
+        this.pushUndo();
         try { this.tracks[idx].gainNode?.disconnect(); } catch {}
+        try { this.tracks[idx].panNode?.disconnect(); } catch {}
         this.waveformCache.delete(id);
         this.tracks.splice(idx, 1);
         this.updateAllTrackGains();
@@ -913,9 +941,11 @@ class LoopMachine {
         // Copy extra state onto the newly added track
         const nt = this.tracks[this.tracks.length - 1];
         nt.volume = t.volume;
+        nt.pan = t.pan || 0;
         nt.muted = t.muted;
         nt.solo = t.solo;
         nt.loop = t.loop;
+        if (nt.panNode) nt.panNode.pan.value = nt.pan;
         this.updateAllTrackGains();
         this.renderTracks();
         this.showToast('Track duplicated ⧉');
@@ -962,7 +992,151 @@ class LoopMachine {
             if (!t.gainNode) continue;
             const audible = !t.muted && (!anySolo || t.solo);
             t.gainNode.gain.setTargetAtTime(audible ? t.volume : 0, this.audioCtx.currentTime, 0.02);
+            if (t.panNode) t.panNode.pan.setTargetAtTime(t.pan || 0, this.audioCtx.currentTime, 0.02);
         }
+    }
+
+    /* ==========================================================
+       Track pan
+    ========================================================== */
+    setTrackPan(id, pan) {
+        const t = this.tracks.find(tr => tr.id === id);
+        if (t) {
+            t.pan = pan;
+            if (t.panNode && this.audioCtx) t.panNode.pan.setTargetAtTime(pan, this.audioCtx.currentTime, 0.02);
+        }
+    }
+
+    _panLabel(pan) {
+        if (Math.abs(pan) < 0.02) return 'C';
+        const pct = Math.round(Math.abs(pan) * 100);
+        return pan < 0 ? `L${pct}` : `R${pct}`;
+    }
+
+    /* ==========================================================
+       Track reorder
+    ========================================================== */
+    moveTrackUp(id) {
+        const idx = this.tracks.findIndex(t => t.id === id);
+        if (idx <= 0) return;
+        this.pushUndo();
+        [this.tracks[idx - 1], this.tracks[idx]] = [this.tracks[idx], this.tracks[idx - 1]];
+        this.waveformCache.clear();
+        this.renderTracks();
+    }
+
+    moveTrackDown(id) {
+        const idx = this.tracks.findIndex(t => t.id === id);
+        if (idx === -1 || idx >= this.tracks.length - 1) return;
+        this.pushUndo();
+        [this.tracks[idx], this.tracks[idx + 1]] = [this.tracks[idx + 1], this.tracks[idx]];
+        this.waveformCache.clear();
+        this.renderTracks();
+    }
+
+    /* ==========================================================
+       Snap to grid
+    ========================================================== */
+    toggleSnap() {
+        this.snapToGrid = !this.snapToGrid;
+        this.dom.snapBtn.classList.toggle('active', this.snapToGrid);
+        this.showToast(this.snapToGrid ? 'Snap to grid ON 🧲' : 'Snap to grid OFF');
+    }
+
+    /* ==========================================================
+       Undo
+    ========================================================== */
+    _getUndoState() {
+        return {
+            nextTrackId: this.nextTrackId,
+            tracks: this.tracks.map(t => ({
+                id: t.id,
+                name: t.name,
+                rawBuffer: t.rawBuffer,
+                trimStart: t.trimStart,
+                trimEnd: t.trimEnd,
+                clipOffset: t.clipOffset,
+                muted: t.muted,
+                solo: t.solo,
+                volume: t.volume,
+                pan: t.pan || 0,
+                loop: t.loop,
+            })),
+        };
+    }
+
+    pushUndo() {
+        this.undoStack.push(this._getUndoState());
+        if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
+    }
+
+    undo() {
+        if (!this.undoStack.length) {
+            this.showToast('Nothing to undo');
+            return;
+        }
+        const state = this.undoStack.pop();
+
+        // Disconnect existing nodes
+        for (const t of this.tracks) {
+            try { t.gainNode?.disconnect(); } catch {}
+            try { t.panNode?.disconnect(); } catch {}
+        }
+
+        this.nextTrackId = state.nextTrackId;
+        this.tracks = state.tracks.map(s => {
+            let gainNode = null;
+            let panNode = null;
+            if (this.audioCtx) {
+                gainNode = this.audioCtx.createGain();
+                gainNode.gain.value = s.volume;
+                panNode = this.audioCtx.createStereoPanner();
+                panNode.pan.value = s.pan || 0;
+                gainNode.connect(panNode);
+                panNode.connect(this.masterGain);
+            }
+            return { ...s, gainNode, panNode };
+        });
+
+        this.waveformCache.clear();
+        this.updateAllTrackGains();
+        this.renderTracks();
+        this.showToast('Undone ↩');
+    }
+
+    /* ==========================================================
+       Click-to-seek
+    ========================================================== */
+    _seekFromClick(e) {
+        const rect = this.dom.progressBar.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const fraction = Math.max(0, Math.min(1, x / rect.width));
+        this.seek(fraction);
+    }
+
+    async seek(fraction) {
+        await this.initAudio();
+
+        if (!this.isPlaying) {
+            const pos = fraction * this.loopDuration;
+            const bar = Math.floor(pos / this.barDuration) + 1;
+            const beat = Math.floor((pos % this.barDuration) / this.beatDuration) + 1;
+            this.dom.posBar.textContent = Math.min(bar, this.totalBars);
+            this.dom.posBeat.textContent = Math.min(beat, this.beatsPerBar);
+            const pct = (fraction * 100).toFixed(2);
+            this.dom.progressFill.style.width = pct + '%';
+            this.dom.progressHead.style.left = pct + '%';
+            this._drawAllPlayheads(fraction);
+            return;
+        }
+
+        // Seek while playing: adjust playOriginTime and reschedule
+        const seekPos = fraction * this.loopDuration;
+        const loopOrigin = this.audioCtx.currentTime - seekPos;
+        this.playOriginTime = loopOrigin;
+        clearTimeout(this.loopTimer);
+        this.stopAllSources();
+        this.scheduleLoop(loopOrigin);
     }
 
     /* ==========================================================
@@ -989,7 +1163,7 @@ class LoopMachine {
 
         if (mx < visStart || mx > visEnd) return; // not over visible clip
 
-        this._clipDrag = { trackId, startMouseX: e.clientX, origOffset: t.clipOffset, containerW: w };
+        this._clipDrag = { trackId, startMouseX: e.clientX, origOffset: t.clipOffset, containerW: w, undoState: this._getUndoState() };
         cont.classList.add('dragging');
         e.preventDefault();
     }
@@ -1007,6 +1181,13 @@ class LoopMachine {
         // Limit: at least a tiny sliver must remain visible
         const minVisible = 0.01; // seconds
         let newOffset = origOffset + dt;
+
+        // Snap to grid if enabled
+        if (this.snapToGrid) {
+            const snapRes = this.beatDuration;
+            newOffset = Math.round(newOffset / snapRes) * snapRes;
+        }
+
         newOffset = Math.max(-clipDur + minVisible, Math.min(newOffset, this.loopDuration - minVisible));
 
         t.clipOffset = newOffset;
@@ -1016,8 +1197,15 @@ class LoopMachine {
 
     _endClipDrag() {
         if (!this._clipDrag) return;
-        const cont = document.querySelector(`[data-waveform-id="${this._clipDrag.trackId}"]`);
+        const { trackId, origOffset, undoState } = this._clipDrag;
+        const cont = document.querySelector(`[data-waveform-id="${trackId}"]`);
         if (cont) cont.classList.remove('dragging');
+        // Push undo only if position actually changed
+        const t = this.tracks.find(tr => tr.id === trackId);
+        if (t && Math.abs(t.clipOffset - origOffset) > 0.001 && undoState) {
+            this.undoStack.push(undoState);
+            if (this.undoStack.length > this.maxUndoSteps) this.undoStack.shift();
+        }
         this._clipDrag = null;
     }
 
@@ -1088,6 +1276,8 @@ class LoopMachine {
                 <input class="track-name" type="text" value="${this._esc(t.name)}"
                        data-action="rename" data-id="${t.id}" spellcheck="false">
                 <div class="track-header-btns">
+                    <button class="track-icon-btn btn-move" data-action="move-up" data-id="${t.id}" title="Move Up">▲</button>
+                    <button class="track-icon-btn btn-move" data-action="move-down" data-id="${t.id}" title="Move Down">▼</button>
                     <button class="track-icon-btn btn-dup" data-action="duplicate" data-id="${t.id}" title="Duplicate">⧉</button>
                     <button class="track-icon-btn btn-download" data-action="download" data-id="${t.id}" title="Download">⤓</button>
                     <button class="track-icon-btn btn-trim" data-action="trim" data-id="${t.id}" title="Trim">✂</button>
@@ -1103,6 +1293,12 @@ class LoopMachine {
                     <label>Vol</label>
                     <input type="range" min="0" max="3" step="0.01" value="${t.volume}" data-action="volume" data-id="${t.id}">
                     <span class="vol-display" data-vol-display="${t.id}">${Math.round(t.volume * 100)}%</span>
+                </div>
+                <div class="track-control-sep"></div>
+                <div class="track-control-group">
+                    <label>Pan</label>
+                    <input type="range" min="-1" max="1" step="0.01" value="${t.pan || 0}" data-action="pan" data-id="${t.id}">
+                    <span class="pan-display" data-pan-display="${t.id}">${this._panLabel(t.pan || 0)}</span>
                 </div>
             </div>
             <div class="track-waveform" data-waveform-id="${t.id}">
@@ -1127,6 +1323,13 @@ class LoopMachine {
             if (disp) disp.textContent = Math.round(+e.target.value * 100) + '%';
         });
         el.querySelector('[data-action="rename"]').addEventListener('change', e => this.setTrackName(track.id, e.target.value));
+        el.querySelector('[data-action="move-up"]').addEventListener('click', () => this.moveTrackUp(track.id));
+        el.querySelector('[data-action="move-down"]').addEventListener('click', () => this.moveTrackDown(track.id));
+        el.querySelector('[data-action="pan"]').addEventListener('input', e => {
+            this.setTrackPan(track.id, +e.target.value);
+            const disp = el.querySelector(`[data-pan-display="${track.id}"]`);
+            if (disp) disp.textContent = this._panLabel(+e.target.value);
+        });
 
         // Clip drag on waveform (mouse + touch)
         const wf = el.querySelector(`[data-waveform-id="${track.id}"]`);
@@ -1436,12 +1639,6 @@ class LoopMachine {
                         buf = this._rechannelBuffer(buf, channels, sampleRate);
                     }
 
-                    const source = offCtx.createBufferSource();
-                    source.buffer = buf;
-                    const gain = offCtx.createGain();
-                    gain.gain.value = track.volume;
-                    source.connect(gain); gain.connect(masterGain);
-
                     // Build instances (tiled if loop is on)
                     const instances = [];
                     if (track.loop) {
@@ -1466,7 +1663,9 @@ class LoopMachine {
                         src.buffer = buf;
                         const g = offCtx.createGain();
                         g.gain.value = track.volume;
-                        src.connect(g); g.connect(masterGain);
+                        const p = offCtx.createStereoPanner();
+                        p.pan.value = track.pan || 0;
+                        src.connect(g); g.connect(p); p.connect(masterGain);
 
                         const bufferOffset = track.trimStart + (audibleStart - absStart);
                         const playDur = audibleEnd - audibleStart;
@@ -1676,6 +1875,7 @@ class LoopMachine {
                     muted: t.muted,
                     solo: t.solo,
                     volume: t.volume,
+                    pan: t.pan || 0,
                     loop: t.loop,
                 });
             }
@@ -1735,6 +1935,9 @@ class LoopMachine {
             // Stop playback
             if (this.isPlaying) this.stop();
 
+            // Push undo for restore
+            if (this.tracks.length) this.pushUndo();
+
             // Restore settings
             this.bpm = project.settings.bpm || 120;
             this.beatsPerBar = project.settings.beatsPerBar || 4;
@@ -1754,6 +1957,7 @@ class LoopMachine {
             // Clear existing tracks
             for (const t of this.tracks) {
                 try { t.gainNode?.disconnect(); } catch {}
+                try { t.panNode?.disconnect(); } catch {}
             }
             this.tracks = [];
             this.waveformCache.clear();
@@ -1771,19 +1975,24 @@ class LoopMachine {
                 const id = this.nextTrackId++;
                 const gainNode = this.audioCtx.createGain();
                 gainNode.gain.value = 1;
-                gainNode.connect(this.masterGain);
+                const panNode = this.audioCtx.createStereoPanner();
+                panNode.pan.value = meta.pan || 0;
+                gainNode.connect(panNode);
+                panNode.connect(this.masterGain);
 
                 this.tracks.push({
                     id,
                     name: meta.name || `Track ${id}`,
                     rawBuffer,
                     gainNode,
+                    panNode,
                     trimStart: meta.trimStart || 0,
                     trimEnd: meta.trimEnd ?? rawBuffer.duration,
                     clipOffset: meta.clipOffset || 0,
                     muted: meta.muted || false,
                     solo: meta.solo || false,
                     volume: meta.volume ?? 1,
+                    pan: meta.pan || 0,
                     loop: meta.loop || false,
                 });
             }

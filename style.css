@@ -108,6 +108,11 @@ body {
 @keyframes pulse-rec { 0%,100%{box-shadow:0 0 0 0 rgba(209,115,115,0.5);} 50%{box-shadow:0 0 0 8px rgba(209,115,115,0);} }
 .transport-btn.btn-metro .icon { fill: var(--text-muted); }
 .transport-btn.btn-metro.active .icon { fill: var(--bg-primary); }
+.transport-btn.btn-snap .icon { fill: var(--text-muted); }
+.transport-btn.btn-snap.active { background: var(--accent-dim); border-color: var(--accent); color: var(--bg-primary); }
+.transport-btn.btn-snap.active .icon { fill: var(--bg-primary); }
+.transport-btn.btn-undo .icon { fill: var(--text-muted); }
+.transport-btn.btn-undo:hover .icon { fill: var(--text); }
 .transport-divider { width: 1px; height: 28px; background: var(--bg-hover); margin: 0 4px; }
 .master-vol { display: flex; align-items: center; gap: 6px; margin-left: 6px; }
 .master-vol .icon-sm { width: 16px; height: 16px; fill: var(--text-dim); }
@@ -115,10 +120,10 @@ body {
 .progress-container { flex: 1; position: relative; }
 .progress-bar {
     height: 24px; background: var(--bg-input); border-radius: var(--radius-sm);
-    overflow: hidden; position: relative; border: 1px solid var(--bg-hover);
+    overflow: hidden; position: relative; border: 1px solid var(--bg-hover); cursor: pointer;
 }
-.progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); border-radius: var(--radius-sm); transition: none; opacity: 0.3; }
-.progress-head { position: absolute; top: 0; left: 0; width: 2px; height: 100%; background: var(--accent); box-shadow: 0 0 6px var(--accent-glow-strong); border-radius: 1px; transition: none; }
+.progress-fill { height: 100%; width: 0%; background: linear-gradient(90deg, var(--accent-dim), var(--accent)); border-radius: var(--radius-sm); transition: none; opacity: 0.3; pointer-events: none; }
+.progress-head { position: absolute; top: 0; left: 0; width: 2px; height: 100%; background: var(--accent); box-shadow: 0 0 6px var(--accent-glow-strong); border-radius: 1px; transition: none; pointer-events: none; }
 .beat-markers { position: absolute; top: 0; left: 0; right: 0; bottom: 0; pointer-events: none; display: flex; }
 .beat-marker { flex: 1; border-right: 1px solid rgba(255,255,255,0.06); }
 .beat-marker.downbeat { border-right-color: rgba(255,255,255,0.15); }
@@ -167,6 +172,8 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: v
 .track-icon-btn.btn-download:hover { color: #7395d1; }
 .track-icon-btn.btn-trim:hover { color: var(--accent); }
 .track-icon-btn.btn-delete:hover { background: rgba(209,115,115,0.15); color: var(--danger); }
+.track-icon-btn.btn-move { font-size: 0.65rem; width: 22px; }
+.track-icon-btn.btn-move:hover { color: var(--accent); }
 .track-controls { display: flex; align-items: center; gap: 8px; padding: 4px 14px 8px; flex-wrap: wrap; }
 .track-btn {
     width: 30px; height: 26px; border: 1px solid var(--bg-hover);
@@ -187,6 +194,7 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: v
 .track:hover .track-control-group input[type="range"] { background: var(--bg-tertiary); }
 .track:hover .track-control-group input[type="range"]::-webkit-slider-thumb { background: var(--accent); border-color: var(--bg-hover); }
 .vol-display { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); min-width: 32px; text-align: right; }
+.pan-display { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); min-width: 24px; text-align: center; }
 .track-control-sep { width: 1px; height: 20px; background: var(--bg-hover); margin: 0 4px; }
 /* ---- Track Waveform (timeline) ---- */
 .track-waveform {
