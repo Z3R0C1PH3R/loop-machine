@@ -900,6 +900,51 @@ class LoopMachine {
         if (t) { t.loop = !t.loop; this.waveformCache.delete(id); this.renderTracks(); }
     }
 
+    duplicateTrack(id) {
+        const t = this.tracks.find(tr => tr.id === id);
+        if (!t) return;
+        this.addTrack({
+            rawBuffer: t.rawBuffer,
+            name: t.name + ' (copy)',
+            trimStart: t.trimStart,
+            trimEnd: t.trimEnd,
+            clipOffset: t.clipOffset,
+        });
+        // Copy extra state onto the newly added track
+        const nt = this.tracks[this.tracks.length - 1];
+        nt.volume = t.volume;
+        nt.muted = t.muted;
+        nt.solo = t.solo;
+        nt.loop = t.loop;
+        this.updateAllTrackGains();
+        this.renderTracks();
+        this.showToast('Track duplicated ⧉');
+    }
+
+    async downloadTrack(id) {
+        const t = this.tracks.find(tr => tr.id === id);
+        if (!t || !t.rawBuffer) return;
+        await this.initAudio();
+
+        // Encode full raw buffer as 16-bit WAV
+        const sr = t.rawBuffer.sampleRate;
+        const channels = t.rawBuffer.numberOfChannels;
+        const channelData = [];
+        for (let ch = 0; ch < channels; ch++) {
+            channelData.push(new Float32Array(t.rawBuffer.getChannelData(ch)));
+        }
+        const wavBlob = this._encodeWAV(channelData, sr, 16);
+        const url = URL.createObjectURL(wavBlob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (t.name || 'track').replace(/[^a-zA-Z0-9_\- ]/g, '') + '.wav';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+        this.showToast('Track downloaded ⤓');
+    }
+
     setTrackVolume(id, vol) {
         const t = this.tracks.find(tr => tr.id === id);
         if (t) { t.volume = vol; this.updateAllTrackGains(); }
@@ -1043,6 +1088,8 @@ class LoopMachine {
                 <input class="track-name" type="text" value="${this._esc(t.name)}"
                        data-action="rename" data-id="${t.id}" spellcheck="false">
                 <div class="track-header-btns">
+                    <button class="track-icon-btn btn-dup" data-action="duplicate" data-id="${t.id}" title="Duplicate">⧉</button>
+                    <button class="track-icon-btn btn-download" data-action="download" data-id="${t.id}" title="Download">⤓</button>
                     <button class="track-icon-btn btn-trim" data-action="trim" data-id="${t.id}" title="Trim">✂</button>
                     <button class="track-icon-btn btn-delete" data-action="delete" data-id="${t.id}" title="Delete">✕</button>
                 </div>
@@ -1054,7 +1101,8 @@ class LoopMachine {
                 <div class="track-control-sep"></div>
                 <div class="track-control-group">
                     <label>Vol</label>
-                    <input type="range" min="0" max="1" step="0.01" value="${t.volume}" data-action="volume" data-id="${t.id}">
+                    <input type="range" min="0" max="3" step="0.01" value="${t.volume}" data-action="volume" data-id="${t.id}">
+                    <span class="vol-display" data-vol-display="${t.id}">${Math.round(t.volume * 100)}%</span>
                 </div>
             </div>
             <div class="track-waveform" data-waveform-id="${t.id}">
@@ -1067,11 +1115,17 @@ class LoopMachine {
         const el = document.querySelector(`[data-track-id="${track.id}"]`);
         if (!el) return;
         el.querySelector('[data-action="delete"]').addEventListener('click', () => this.removeTrack(track.id));
+        el.querySelector('[data-action="duplicate"]').addEventListener('click', () => this.duplicateTrack(track.id));
+        el.querySelector('[data-action="download"]').addEventListener('click', () => this.downloadTrack(track.id));
         el.querySelector('[data-action="trim"]').addEventListener('click',   () => this.openTrimModal(track.rawBuffer, track.id));
         el.querySelector('[data-action="mute"]').addEventListener('click',   () => this.toggleMute(track.id));
         el.querySelector('[data-action="solo"]').addEventListener('click',   () => this.toggleSolo(track.id));
         el.querySelector('[data-action="loop"]').addEventListener('click',   () => this.toggleLoop(track.id));
-        el.querySelector('[data-action="volume"]').addEventListener('input', e => this.setTrackVolume(track.id, +e.target.value));
+        el.querySelector('[data-action="volume"]').addEventListener('input', e => {
+            this.setTrackVolume(track.id, +e.target.value);
+            const disp = el.querySelector(`[data-vol-display="${track.id}"]`);
+            if (disp) disp.textContent = Math.round(+e.target.value * 100) + '%';
+        });
         el.querySelector('[data-action="rename"]').addEventListener('change', e => this.setTrackName(track.id, e.target.value));
 
         // Clip drag on waveform (mouse + touch)

@@ -163,6 +163,8 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: v
     font-size: 1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s;
 }
 .track-icon-btn:hover { background: var(--bg-tertiary); color: var(--text); }
+.track-icon-btn.btn-dup:hover { color: var(--accent); }
+.track-icon-btn.btn-download:hover { color: #7395d1; }
 .track-icon-btn.btn-trim:hover { color: var(--accent); }
 .track-icon-btn.btn-delete:hover { background: rgba(209,115,115,0.15); color: var(--danger); }
 .track-controls { display: flex; align-items: center; gap: 8px; padding: 4px 14px 8px; flex-wrap: wrap; }
@@ -180,7 +182,11 @@ input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; background: v
 .track-btn.btn-loop.active { background: var(--accent); border-color: var(--accent); color: var(--bg-primary); }
 .track-control-group { display: flex; align-items: center; gap: 5px; font-size: 0.75rem; color: var(--text-dim); }
 .track-control-group label { font-size: 0.65rem; text-transform: uppercase; letter-spacing: 1px; font-weight: 500; white-space: nowrap; }
-.track-control-group input[type="range"] { width: 60px; }
+.track-control-group input[type="range"] { width: 70px; height: 6px; background: var(--bg-tertiary); position: relative; z-index: 1; }
+.track-control-group input[type="range"]::-webkit-slider-thumb { background: var(--accent); border: 2px solid var(--bg-card); width: 14px; height: 14px; }
+.track:hover .track-control-group input[type="range"] { background: var(--bg-tertiary); }
+.track:hover .track-control-group input[type="range"]::-webkit-slider-thumb { background: var(--accent); border-color: var(--bg-hover); }
+.vol-display { font-family: var(--font-mono); font-size: 0.7rem; color: var(--accent); min-width: 32px; text-align: right; }
 .track-control-sep { width: 1px; height: 20px; background: var(--bg-hover); margin: 0 4px; }
 /* ---- Track Waveform (timeline) ---- */
 .track-waveform {
